@@ -1,0 +1,88 @@
+!pip install -Uq langchain langchain-huggingface langchain-community huggingface_hub wikipedia unstructured chromadb pdfminer.six pi-heif InstructorEmbedding
+
+from langchain_huggingface import HuggingFaceEndpoint
+from langchain_huggingface.chat_models import ChatHuggingFace
+from langchain.prompts import PromptTemplate
+from langchain_community.utilities import WikipediaAPIWrapper
+from google.colab import userdata
+import os
+import shutil
+
+from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
+from langchain_huggingface.chat_models import ChatHuggingFace
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import Chroma
+from langchain.document_loaders import TextLoader, UnstructuredPDFLoader
+from google.colab import files, userdata
+import os
+
+
+# --- HUGGINGFACE TOKEN ---
+sec_key = userdata.get("HP_SECRET")
+os.environ["HUGGINGFACEHUB_API_TOKEN"] = sec_key
+
+# --- DEFINE LLM ---
+llm_endpoint = HuggingFaceEndpoint(
+    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+    task="conversational",   # required for this model
+    max_new_tokens=512,
+    temperature=0.7
+)
+chat_llm = ChatHuggingFace(llm=llm_endpoint)
+
+# --- UPLOAD DOCUMENTS ---
+print("Upload your PDFs or text files:")
+uploaded_files = files.upload()  # Colab file picker
+
+docs = []
+for fn in uploaded_files.keys():
+    if fn.lower().endswith(".pdf"):
+        loader = UnstructuredPDFLoader(fn)
+    else:
+        loader = TextLoader(fn, encoding="utf-8")
+    docs.extend(loader.load())
+
+print(f"Loaded {len(docs)} documents from uploaded files.")
+
+# --- SPLIT DOCUMENTS INTO CHUNKS ---
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+chunks = text_splitter.split_documents(docs)
+print(f"Split into {len(chunks)} chunks for embedding.")
+
+# --- EMBEDDINGS + VECTORSTORE ---
+# Delete old Chroma DB to avoid dimension conflicts
+shutil.rmtree("chromadb", ignore_errors=True)
+
+# Use 1024-dim embeddings
+embeddings = HuggingFaceEmbeddings(model_name="hkunlp/instructor-xl")
+vectorstore = Chroma.from_documents(chunks, embeddings, persist_directory="chromadb")
+
+# --- PROMPT TEMPLATE ---
+template = """
+You are a professional journalist. Using the context below,
+write a concise newspaper-style article with a catchy headline and exactly 3 short paragraphs.
+
+Context:
+{context}
+
+Topic: {topic}
+
+Article:
+"""
+prompt = PromptTemplate(input_variables=["context", "topic"], template=template)
+chain = LLMChain(llm=chat_llm, prompt=prompt)
+
+# --- USER INPUT TOPIC ---
+topic = input("Enter the article topic: ")
+
+# --- RETRIEVE RELEVANT CHUNKS ---
+retrieved_docs = vectorstore.similarity_search(topic, k=3)
+context_text = "\n".join([doc.page_content for doc in retrieved_docs])
+
+# --- GENERATE ARTICLE ---
+article = chain.run({"context": context_text, "topic": topic})
+
+print("\n Generated Article:\n")
+print(article)
