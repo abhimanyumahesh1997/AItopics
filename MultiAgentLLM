@@ -1,0 +1,77 @@
+# installations
+!pip install -Uq langchain langchain-community huggingface_hub wikipedia langchain-huggingface
+
+# importing
+from langchain_huggingface import HuggingFaceEndpoint
+from langchain_huggingface.chat_models import ChatHuggingFace
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+from langchain_community.utilities import WikipediaAPIWrapper
+from google.colab import userdata
+import os
+
+# token importing
+sec_key = userdata.get("HP_SECRET")
+os.environ["HUGGINGFACEHUB_API_TOKEN"] = sec_key
+
+# llm mistral
+llm_endpoint = HuggingFaceEndpoint(
+    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+    task="conversational",
+    max_new_tokens=512,
+    temperature=0.7
+)
+chat_llm = ChatHuggingFace(llm=llm_endpoint)
+
+#################################################################################################################################################
+
+# Agent 1 for Wikipedia contents
+wiki = WikipediaAPIWrapper(lang="en", top_k_results=3)
+
+wiki_agent_prompt = PromptTemplate(
+    input_variables=["query"],
+    template="""
+You are an information retrieval agent. Given the user query, fetch the relevant context from Wikipedia.
+Query: {query}
+
+Provide the relevant text only.""")
+# chain for agent 1
+wiki_agent = LLMChain(llm=chat_llm, prompt=wiki_agent_prompt)
+
+def run_wiki_agent(query):
+    wiki_context = wiki.run(query)
+    return wiki_context
+#################################################################################################################################################
+
+# Agent 2 for article wrting
+article_agent_prompt = PromptTemplate(
+    input_variables=["context", "topic"],
+    template="""
+You are a journalist. Using the context below,
+write a concise newspaper-style article with a catchy headline and exactly 3 short paragraphs.
+
+Context:
+{context}
+
+Topic: {topic}
+
+Article:       """)
+# chain for agent 2
+article_agent = LLMChain(llm=chat_llm, prompt=article_agent_prompt)
+
+def run_article_agent(topic, context):
+    article = article_agent.run({"topic": topic, "context": context})
+    return article
+
+# get user input for topic
+topic = input("Enter article topic: ")
+
+# running agent 1
+wiki_context = run_wiki_agent(topic)
+print("\n Wikipedia information has been  downloaded ")
+print(wiki_context[:500], "...")
+
+# running agent 2
+article = run_article_agent(topic, wiki_context)
+print("\n final article is given below:\n \n \n")
+print(article)
